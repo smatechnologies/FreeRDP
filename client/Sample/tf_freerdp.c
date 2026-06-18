@@ -40,6 +40,7 @@
 #include <winpr/crt.h>
 #include <winpr/assert.h>
 #include <winpr/synch.h>
+#include <winpr/winsock.h>
 #include <freerdp/log.h>
 
 #include "tf_channels.h"
@@ -389,6 +390,12 @@ int main(int argc, char* argv[])
 	int rc = -1;
 	RDP_CLIENT_ENTRY_POINTS clientEntryPoints = WINPR_C_ARRAY_INIT;
 
+#ifdef _WIN32
+	WSADATA wsaData = { 0 };
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+		return -1;
+#endif
+
 	RdpClientEntry(&clientEntryPoints);
 	rdpContext* context = freerdp_client_context_new(&clientEntryPoints);
 
@@ -422,5 +429,8 @@ int main(int argc, char* argv[])
 
 fail:
 	freerdp_client_context_free(context);
+#ifdef _WIN32
+	(void)WSACleanup();
+#endif
 	return rc;
 }

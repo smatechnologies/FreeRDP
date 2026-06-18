@@ -153,7 +153,18 @@ if [ $CLONE -ne 0 ]; then
   do_clone release-3.2.2 https://github.com/libsdl-org/SDL_ttf.git SDL_ttf
   do_clone v2.0.3 https://github.com/mstorsjo/fdk-aac.git fdk-aac
   do_clone v1.6 https://gitlab.xiph.org/xiph/opus.git opus
-  do_download https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/ libressl-4.2.1.tar.gz 6d5c2f58583588ea791f4c8645004071d00dfa554a5bf788a006ca1eb5abd70b libressl
+  # OpenSSL: clone without submodules (we don't need pyca-cryptography test vectors)
+  if [ -d openssl ]; then
+    (
+      cd openssl
+      git fetch --all
+      git clean -xdf
+      git reset --hard openssl-3.6.2
+      git checkout openssl-3.6.2
+    )
+  else
+    git clone --depth 1 -b openssl-3.6.2 https://github.com/openssl/openssl.git openssl
+  fi
 fi
 
 if [ $BUILD -eq 0 ]; then
@@ -161,11 +172,25 @@ if [ $BUILD -eq 0 ]; then
 fi
 
 if [ $DEPS -ne 0 ]; then
-  do_cmake_build \
-    "$BUILD_BASE/libressl" \
-    -S libressl \
-    -DLIBRESSL_APPS=OFF \
-    -DLIBRESSL_TESTS=OFF
+  (
+    mkdir -p "$BUILD_BASE/openssl"
+    cd "$BUILD_BASE/openssl"
+    if [ $ARG_STATIC -ne 0 ]; then
+      OPENSSL_SHARED_OPT="no-shared"
+    else
+      OPENSSL_SHARED_OPT="shared"
+    fi
+    "$SRC_BASE/openssl/Configure" mingw64 \
+      --cross-compile-prefix=x86_64-w64-mingw32- \
+      --prefix="$INSTALL_BASE" \
+      --openssldir="$INSTALL_BASE/ssl" \
+      $OPENSSL_SHARED_OPT \
+      no-tests \
+      no-docs \
+      no-apps
+    make -j4
+    make install_sw
+  )
 
   do_cmake_build \
     "$BUILD_BASE/zlib" \
@@ -273,6 +298,7 @@ do_cmake_build \
   -DWITH_SHADOW=OFF \
   -DWITH_PLATFORM_SERVER=OFF \
   -DWITH_SAMPLE=ON \
+  -DWITH_CLIENT_HEADLESS=ON \
   -DWITH_PLATFORM_SERVER=OFF \
   -DUSE_UNWIND=OFF \
   -DSDL_USE_COMPILED_RESOURCES=$ARG_COMPILED_RES \
@@ -284,7 +310,10 @@ do_cmake_build \
   -DWITH_SIMD=ON \
   -DWITH_OPENH264=$OPENH264 \
   -DWITH_WEBVIEW=OFF \
-  -DWITH_LIBRESSL=ON \
+  -DWITH_LIBRESSL=OFF \
+  -DWITH_OPENSSL=ON \
+  -DWITH_INTERNAL_MD4=ON \
+  -DWITH_INTERNAL_RC4=ON \
   -DWITH_OPUS=ON \
   -DWITH_JSONC_REQUIRED=ON \
   -DWITH_FDK_AAC=ON \
