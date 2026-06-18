@@ -98,7 +98,6 @@ jobs:
           set -euxo pipefail
           cmake -S . -B build-linux -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/tmp/install \
             -DBUILD_SHARED_LIBS=ON \
             -DWITH_SAMPLE=ON \
             -DWITH_INTERNAL_MD4=ON \
@@ -111,20 +110,22 @@ jobs:
             -DWITH_FUSE=OFF -DUSE_UNWIND=OFF -DWITH_MANPAGES=OFF \
             -DWITH_URIPARSER=OFF -DWITH_JSON_DISABLED=ON \
             -DCHANNEL_URBDRC=OFF -DCHANNEL_PRINTER=OFF
+          # Build only sfreerdp + its link dependencies. We deliberately do NOT
+          # run `cmake --install`: a full install pulls targets we never build
+          # (e.g. winpr-tools) and fails. Collect artifacts from the build tree.
           cmake --build build-linux --target sfreerdp
-          cmake --install build-linux
 
       - name: Stage Linux binaries (dereference symlinks)
         run: |
           set -euxo pipefail
           mkdir -p stage/linux-x64
-          SF=$(find /tmp/install build-linux -name sfreerdp -type f | head -1)
+          SF=$(find build-linux -name sfreerdp -type f | head -1)
           cp "$SF" stage/linux-x64/sfreerdp
           chmod +x stage/linux-x64/sfreerdp
           # Copy the FreeRDP/WinPR shared objects, replacing the .so/.so.3
           # symlinks with real files so they survive the (zip-based) nupkg.
           for lib in libfreerdp3 libfreerdp-client3 libwinpr3; do
-            for f in $(find /tmp/install build-linux -name "${lib}.so*"); do
+            for f in $(find build-linux -name "${lib}.so*"); do
               base=$(basename "$f")
               cp -L "$f" "stage/linux-x64/$base"
             done
