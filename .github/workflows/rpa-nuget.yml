@@ -80,6 +80,10 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     container: debian:bookworm
+    defaults:
+      run:
+        # Container jobs default to `sh` (dash); force bash for `pipefail` etc.
+        shell: bash
     steps:
       - name: Install build dependencies
         run: |
