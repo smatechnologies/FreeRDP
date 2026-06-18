@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Imported automatically into any project that has a PackageReference to
+  Sma.Acs.FreeRdp.Native (NuGet auto-imports build/<PackageId>.targets).
+
+  Copies the headless FreeRDP runtime binaries into the consuming project's
+  output directory, flattened beside the assembly. Both platforms are copied
+  unconditionally so a single deploy directory serves Windows relay servers
+  and the Linux container alike; the consumer (FreeRdpClient.SelectBinary)
+  picks the right one per-OS at runtime. This mirrors the previous
+  hand-maintained <Content Include="..\bin\Windows|Linux\*"> items.
+-->
+<Project>
+  <PropertyGroup>
+    <_SmaFreeRdpToolsDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\tools\'))</_SmaFreeRdpToolsDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Windows: sfreerdp.exe + libzlib.dll -->
+    <Content Include="$(_SmaFreeRdpToolsDir)win-x64\**\*">
+      <Link>%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>false</Pack>
+      <Visible>false</Visible>
+    </Content>
+
+    <!-- Linux: sfreerdp + libfreerdp3 / libfreerdp-client3 / libwinpr3 shared libs -->
+    <Content Include="$(_SmaFreeRdpToolsDir)linux-x64\**\*">
+      <Link>%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>false</Pack>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,204 @@
+name: RPA FreeRDP NuGet
+
+# Builds the headless sfreerdp binaries for Windows + Linux and publishes them
+# as the Sma.Acs.FreeRdp.Native NuGet package to GitHub Packages, so OpConRPA
+# can consume them without committing binaries.
+#
+#   push to rpa_fork      -> prerelease  X.Y.Z-ci.<run>
+#   tag    rpa_X.Y.Z      -> stable      X.Y.Z
+#   workflow_dispatch     -> prerelease (manual)
+
+on:
+  push:
+    branches: [rpa_fork]
+    tags: ['rpa_*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: rpa-nuget-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Bump to invalidate the MinGW dependency cache (OpenSSL/SDL/... build tree).
+  MINGW_CACHE_VERSION: v1
+
+jobs:
+  # ---------------------------------------------------------------- Windows
+  build-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install MinGW cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            mingw-w64 cmake ninja-build nasm pkg-config make meson perl git
+
+      # The build-mingw tree holds the cross-compiled dependencies (OpenSSL,
+      # SDL, zlib, ...). It is expensive to build once and cheap to reuse.
+      - name: Cache MinGW dependencies
+        id: mingw-cache
+        uses: actions/cache@v4
+        with:
+          path: build-mingw
+          key: mingw-${{ env.MINGW_CACHE_VERSION }}-${{ hashFiles('scripts/mingw.sh', 'scripts/mingw64.cmake') }}
+
+      - name: Build sfreerdp.exe (static)
+        run: |
+          set -euxo pipefail
+          if [ -d build-mingw/install/lib ] || [ -d build-mingw/install/lib64 ]; then
+            # Warm cache: skip clone + dependency build, just (re)build FreeRDP.
+            scripts/mingw.sh -s -c -d
+          else
+            scripts/mingw.sh -s
+          fi
+
+      - name: Stage Windows binaries
+        run: |
+          set -euxo pipefail
+          mkdir -p stage/win-x64
+          EXE=$(find build-mingw -name sfreerdp.exe | head -1)
+          ZLIB=$(find build-mingw/install -name 'libzlib.dll' | head -1)
+          test -n "$EXE"  && cp "$EXE"  stage/win-x64/sfreerdp.exe
+          test -n "$ZLIB" && cp "$ZLIB" stage/win-x64/libzlib.dll
+          ls -l stage/win-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          path: stage/win-x64/
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ Linux
+  build-linux:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - name: Install build dependencies
+        run: |
+          set -eux
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git \
+            libssl-dev zlib1g-dev libkrb5-dev libicu-dev ca-certificates
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure + build sfreerdp (shared)
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build-linux -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/tmp/install \
+            -DBUILD_SHARED_LIBS=ON \
+            -DWITH_SAMPLE=ON \
+            -DWITH_INTERNAL_MD4=ON \
+            -DWITH_INTERNAL_RC4=ON \
+            -DWITH_CLIENT_SDL=OFF \
+            -DWITH_CLIENT_SDL2=OFF \
+            -DWITH_SERVER=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF \
+            -DWITH_X11=OFF -DWITH_WAYLAND=OFF \
+            -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_WEBVIEW=OFF \
+            -DWITH_FUSE=OFF -DUSE_UNWIND=OFF -DWITH_MANPAGES=OFF \
+            -DWITH_URIPARSER=OFF -DWITH_JSON_DISABLED=ON \
+            -DCHANNEL_URBDRC=OFF -DCHANNEL_PRINTER=OFF
+          cmake --build build-linux --target sfreerdp
+          cmake --install build-linux
+
+      - name: Stage Linux binaries (dereference symlinks)
+        run: |
+          set -euxo pipefail
+          mkdir -p stage/linux-x64
+          SF=$(find /tmp/install build-linux -name sfreerdp -type f | head -1)
+          cp "$SF" stage/linux-x64/sfreerdp
+          chmod +x stage/linux-x64/sfreerdp
+          # Copy the FreeRDP/WinPR shared objects, replacing the .so/.so.3
+          # symlinks with real files so they survive the (zip-based) nupkg.
+          for lib in libfreerdp3 libfreerdp-client3 libwinpr3; do
+            for f in $(find /tmp/install build-linux -name "${lib}.so*"); do
+              base=$(basename "$f")
+              cp -L "$f" "stage/linux-x64/$base"
+            done
+          done
+          ls -l stage/linux-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: stage/linux-x64/
+          if-no-files-found: error
+
+  # --------------------------------------------------------- Pack & publish
+  pack-publish:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: win-x64
+          path: staging/win-x64
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x64
+          path: staging/linux-x64
+
+      - name: Compute package version
+        run: |
+          set -euxo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/rpa_* ]]; then
+            VER="${GITHUB_REF#refs/tags/rpa_}"
+            VER="${VER#v}"
+          else
+            BASE=$(git describe --tags --match 'rpa_*' --abbrev=0 2>/dev/null | sed -E 's#^rpa_v?##' || true)
+            BASE="${BASE:-0.1.0}"
+            VER="${BASE}-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "PKG_VERSION=${VER}" >> "$GITHUB_ENV"
+          echo "Package version: ${VER}"
+
+      - name: Pack
+        run: |
+          set -euxo pipefail
+          dotnet pack packaging/rpa-nuget/Sma.Acs.FreeRdp.Native.csproj \
+            -c Release \
+            -p:PackageVersion="${PKG_VERSION}" \
+            -p:WindowsStaging="$GITHUB_WORKSPACE/staging/win-x64" \
+            -p:LinuxStaging="$GITHUB_WORKSPACE/staging/linux-x64" \
+            -o nupkg
+          ls -l nupkg
+
+      - name: Publish to GitHub Packages
+        run: |
+          set -euxo pipefail
+          dotnet nuget add source \
+            --username "${{ github.actor }}" \
+            --password "${{ secrets.GITHUB_TOKEN }}" \
+            --store-password-in-clear-text \
+            --name github \
+            "https://nuget.pkg.github.com/smatechnologies/index.json"
+          dotnet nuget push "nupkg/*.nupkg" \
+            --source github \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --skip-duplicate
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg/*.nupkg
+          if-no-files-found: error

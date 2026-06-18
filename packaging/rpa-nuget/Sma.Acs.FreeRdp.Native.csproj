@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Packaging-only project. Produces the Sma.Acs.FreeRdp.Native NuGet package
+    that bundles the headless FreeRDP (sfreerdp) binaries for Windows + Linux.
+    It compiles no code; the empty build output is excluded from the package.
+
+    Build payload is staged by CI and passed in via properties:
+      dotnet pack packaging/rpa-nuget/Sma.Acs.FreeRdp.Native.csproj \
+        -p:PackageVersion=1.2.0 \
+        -p:WindowsStaging=<abs path to win-x64 files> \
+        -p:LinuxStaging=<abs path to linux-x64 files>
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <PackageId>Sma.Acs.FreeRdp.Native</PackageId>
+    <Authors>SMA Technologies</Authors>
+    <Company>SMA Technologies</Company>
+    <Description>Headless FreeRDP (sfreerdp) native binaries for Windows (sfreerdp.exe + libzlib.dll) and Linux (sfreerdp + libfreerdp/libwinpr shared libs), consumed by the OpConRPA plugin. Built from smatechnologies/FreeRDP.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/smatechnologies/FreeRDP</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>freerdp;rdp;native;opconrpa</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Auto-imported targets that copy the binaries into the consumer's output dir -->
+    <None Include="build\**\*" Pack="true" PackagePath="build\" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(WindowsStaging)' != ''">
+    <None Include="$(WindowsStaging)\**\*" Pack="true" PackagePath="tools\win-x64\" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(LinuxStaging)' != ''">
+    <None Include="$(LinuxStaging)\**\*" Pack="true" PackagePath="tools\linux-x64\" />
+  </ItemGroup>
+
+</Project>
